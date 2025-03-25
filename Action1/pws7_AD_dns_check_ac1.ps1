@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    [pws7_AD_dns_check.ps1] - See for computers with no dns or ptr.
+    [pws7_AD_dns_check_ac1.ps1] - Seek for computers with no dns or ptr.
  
 .DESCRIPTION
     This file needs powershell 7, Get a list of all computers from Active Directory and check for DNS status, if host A or ptr need to be created and send report to e-mail.
