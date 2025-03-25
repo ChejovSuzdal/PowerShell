@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    [pws7_AD_dns_check.ps1] - See for computers with no dns or ptr.
+    [pws7_AD_dns_check.ps1] - Seek for computers with no dns or ptr.
  
 .DESCRIPTION
     This file needs powershell 7, Get a list of all computers from Active Directory and check for DNS status, if host A or ptr need to be created and send report to e-mail.
@@ -43,8 +43,8 @@ SOFTWARE.
 Import-Module DnsServer 
 Import-Module ActiveDirectory
 
-$dnsserver = "<----- YOUR Domain Controller goes here  ---->"
-$HostDomainName = "<----- YOUR Domain fqdn goes here  ---->"
+$dnsserver = (Get-ADDomainController).name
+$HostDomainName = (Get-WmiObject win32_computersystem -ComputerName $dnsserver ).domain
 # need to be added later again
 
 
@@ -81,23 +81,22 @@ $mycount = [System.Math]::Round(($servers.count/4),0)
 $servers | Foreach-object -throttlelimit $mycount -Parallel {
 
 	$writer = $($Using:tw)
+ 	$in_dnsserver = $Using:dnsserver
+	$in_HostDomainName = $Using:HostDomainName
 		
 	$reverseZones_PR = $($Using:reverseZones)
 	$ExistingPtr_main_PR = $($Using:ExistingPtr_main)
 	$mycomputerlist_PR = $($Using:mycomputerlist)
 	
-	$dnsserver = "<----- YOUR Domain Controller goes here  ---->"
-  $HostDomainName = "<----- YOUR Domain fqdn goes here  ---->"
-
 	$server = $($_.name.Split(" ")[0])
 	#Write-host " "
 
 	if (Test-Connection -ComputerName $server -count 1 -ErrorAction SilentlyContinue)
 	{
 		#Write-Host "Check for existing DNS record(s) ::"$server
-		$NodeARecord = Get-DnsServerResourceRecord -ZoneName $HostDomainName -ComputerName $DNSServer -Node $server -RRType A -ErrorAction SilentlyContinue
+		$NodeARecord = Get-DnsServerResourceRecord -ZoneName $in_HostDomainName -ComputerName $in_dnsserver -Node $server -RRType A -ErrorAction SilentlyContinue
 		if($NodeARecord -eq $null){
-			$FQDN_A = $server + '.' + $HostDomainName
+			$FQDN_A = $server + '.' + $in_HostDomainName
 			$myip = (Test-NetConnection $server).RemoteAddress.IPAddressToString
 			
 			$IPAddressAsArray = $myip.Split('.') # Convert IP address to array using the dot as delimiter 
@@ -108,17 +107,17 @@ $servers | Foreach-object -throttlelimit $mycount -Parallel {
 			$ptrRRName = $reversedIP -replace "(.*)$('\.' + $($theReverseZone -replace '\.in-addr\.arpa'))(.*)", '$1$2'  # The resource record name 
 			
 			Write-Host "-- No A record found ::"$FQDN_A "::" $myip
-			$objCOMPLIANT_a = "$FQDN_A;ADD A + PTR;$myip;$HostDomainName;$ptrRRName;$PtrDomainName;$theReverseZone"
-			write-host "$FQDN_A;ADD A + PTR;$myip;$HostDomainName;$ptrRRName;$PtrDomainName;$theReverseZone"
+			$objCOMPLIANT_a = "$FQDN_A;ADD A + PTR;$myip;$in_HostDomainName;$ptrRRName;$PtrDomainName;$theReverseZone"
+			write-host "$FQDN_A;ADD A + PTR;$myip;$in_HostDomainName;$ptrRRName;$PtrDomainName;$theReverseZone"
 
-			#Add-DnsServerResourceRecord -CimSession $dnsserver -ZoneName $HostDomainName -A -Name $server.ToUpper() -IPv4Address $myip -createPTR -ErrorAction SilentlyContinue
-			$NodeARecord = Get-DnsServerResourceRecord -ZoneName $HostDomainName -ComputerName $DNSServer -Node $server -RRType A -ErrorAction SilentlyContinue
+			#Add-DnsServerResourceRecord -CimSession $in_dnsserver -ZoneName $in_HostDomainName -A -Name $server.ToUpper() -IPv4Address $myip -createPTR -ErrorAction SilentlyContinue
+			$NodeARecord = Get-DnsServerResourceRecord -ZoneName $in_HostDomainName -ComputerName $in_dnsserver -Node $server -RRType A -ErrorAction SilentlyContinue
 			Write-Host "++ No A record found ::"$NodeARecord.hostname "::" $NodeARecord.RecordData.IPv4Address.IPAddressToString
 			$writer.WriteLine($objCOMPLIANT_a.toString() )
 		} else {
 
 			$hostName = $server.split(".")[0].ToUpper()
-			#$FQDN = $hostName + '.' + $HostDomainName
+			#$FQDN = $hostName + '.' + $in_HostDomainName
 			#$hostIP1 = $($server | Where-Object {$_.hostname -eq $server.hostname}).RecordData.IPv4Address.IPAddressToString
 			#region PTR 
 			
@@ -127,12 +126,12 @@ $servers | Foreach-object -throttlelimit $mycount -Parallel {
 			)
 			
 			$hostNameIP = $WMMnode.hostname.split(".")[0].ToUpper() 
-			$FQDN = $hostNameIP.ToUpper() + '.' + $HostDomainName
+			$FQDN = $hostNameIP.ToUpper() + '.' + $in_HostDomainName
 			$myhostIP = ($WMMnode).RecordData.IPv4Address.IPAddressToString.Split(' ')
 			
 			
 			#$hostName = $machine.hostname.split(".")[0] 
-			#$FQDN = $hostName + '.' + $HostDomainName
+			#$FQDN = $hostName + '.' + $in_HostDomainName
 			#$hostIP = $($machine | Where-Object {$_.hostname -eq $machine.hostname}).RecordData.IPv4Address.IPAddressToString
 			
 			foreach ( $hostIP in $myhostIP )
@@ -159,16 +158,16 @@ $servers | Foreach-object -throttlelimit $mycount -Parallel {
 					#respectively resource record name contains remainig octets (from 3 to 1) 
 					#Octet-parts of Zone Name are subtracted out of reversed IP. 
 					$ptrRRName = $reversedIP -replace "(.*)$('\.' + $($theReverseZone -replace '\.in-addr\.arpa'))(.*)", '$1$2'  # The resource record name 
-					$OldObj = $(Try {Get-DnsServerResourceRecord -Node $($ExistingPtr | Select-Object -ExpandProperty HostName | Where-Object {$ptrRRName -eq $_}) -ZoneName $theReverseZone -RRType "PTR" -ComputerName $dnsserver -ErrorAction SilentlyContinue} Catch {$null})
+					$OldObj = $(Try {Get-DnsServerResourceRecord -Node $($ExistingPtr | Select-Object -ExpandProperty HostName | Where-Object {$ptrRRName -eq $_}) -ZoneName $theReverseZone -RRType "PTR" -ComputerName $in_dnsserver -ErrorAction SilentlyContinue} Catch {$null})
 						If ($OldObj -eq $null) 
 						{ 
 							#Object does not exist in DNS, creating new one 
-							$objCOMPLIANT_b = "$FQDN;ADD PTR;$hostIP;$HostDomainName;$ptrRRName;$PtrDomainName;$theReverseZone"
-							write-host "$FQDN;ADD PTR;$hostIP;$HostDomainName;$ptrRRName;$PtrDomainName;$theReverseZone"
+							$objCOMPLIANT_b = "$FQDN;ADD PTR;$hostIP;$in_HostDomainName;$ptrRRName;$PtrDomainName;$theReverseZone"
+							write-host "$FQDN;ADD PTR;$hostIP;$in_HostDomainName;$ptrRRName;$PtrDomainName;$theReverseZone"
 							write-host $FQDN + ":ADD PTR:" + $hostIP + "--" + $ptrRRName + "--" + $PtrDomainName + "--" + $theReverseZone
 							Try {
 								# -----   this line add A host automaticaly, at your own risk, you can try with -whatif
-								#Add-DnsServerResourceRecordPtr -Name $ptrRRName -PtrDomainName $PtrDomainName -ZoneName $theReverseZone -ComputerName $dnsserver -ErrorAction SilentlyContinue
+								#Add-DnsServerResourceRecordPtr -Name $ptrRRName -PtrDomainName $PtrDomainName -ZoneName $theReverseZone -ComputerName $in_dnsserver -ErrorAction SilentlyContinue
 							} Catch {
 								write-host "Catch ADD DNS"
 							}
@@ -176,7 +175,7 @@ $servers | Foreach-object -throttlelimit $mycount -Parallel {
 						}
 						Else 
 						{
-							$NewObj = Get-DnsServerResourceRecord -Node $($ExistingPtr | Select-Object -ExpandProperty HostName | Where-Object {$ptrRRName -eq $_}) -ZoneName $theReverseZone -RRType "PTR" -ComputerName $dnsserver 
+							$NewObj = Get-DnsServerResourceRecord -Node $($ExistingPtr | Select-Object -ExpandProperty HostName | Where-Object {$ptrRRName -eq $_}) -ZoneName $theReverseZone -RRType "PTR" -ComputerName $in_dnsserver 
 							if ( $NewObj.count -eq 1)
 							{
 								$NewObj.RecordData.PtrDomainName = $FQDN + '.' 
@@ -188,7 +187,7 @@ $servers | Foreach-object -throttlelimit $mycount -Parallel {
 									#write-host $FQDN + ":UPD PTR:" + $hostIP + "--" + $NewObj + "--" $OldObj + "--" + $theReverseZone
 									Try {
 										# -----   this line add PTR automaticaly, at your own risk, you can try with -whatif
-										#Set-DnsServerResourceRecord -NewInputObject $NewObj -OldInputObject $OldObj -ZoneName $theReverseZone -ComputerName $dnsserver -ErrorAction SilentlyContinu
+										#Set-DnsServerResourceRecord -NewInputObject $NewObj -OldInputObject $OldObj -ZoneName $theReverseZone -ComputerName $in_dnsserver -ErrorAction SilentlyContinu
 									} Catch {
 										write-host "Catch ADD PTR"
 									}
